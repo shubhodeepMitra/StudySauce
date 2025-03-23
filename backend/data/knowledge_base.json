@@ -1,0 +1,34 @@
+{
+  "physics": {
+    "7": {
+      "topics": [
+        {
+          "name": "Forces and Motion",
+          "concepts": [
+            "Newton's Laws of Motion",
+            "Gravity",
+            "Friction",
+            "Simple Machines"
+          ],
+          "difficulty": "beginner"
+        },
+        {
+          "name": "Energy",
+          "concepts": [
+            "Types of Energy",
+            "Energy Conservation",
+            "Work and Power",
+            "Renewable Energy"
+          ],
+          "difficulty": "beginner"
+        }
+      ],
+      "prerequisites": [],
+      "learning_objectives": [
+        "Understand basic physics concepts",
+        "Apply scientific principles to real-world situations",
+        "Develop problem-solving skills"
+      ]
+    }
+  }
+}
