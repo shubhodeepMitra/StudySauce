@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Paper, Typography, Button, CircularProgress, Stepper, Step, StepLabel, List, ListItem, ListItemText, ListItemIcon, Alert } from '@mui/material';
+import { Box, Paper, Typography, Button, CircularProgress, Alert, Container, Grid } from '@mui/material';
 import { CheckCircle as CheckCircleIcon } from '@mui/icons-material';
 
 interface AITutorProps {
@@ -10,47 +10,54 @@ interface AITutorProps {
 interface ConversationState {
   id: string;
   joinUrl: string;
-  status: string;
+  status: 'pending' | 'active' | 'ended' | 'completed';
 }
 
 interface TeachingPlan {
-  understanding_level: string;
-  topics: Array<{
-    name: string;
-    priority: number;
-    objectives: string[];
-    script: string;
-  }>;
+  topics: string[];
+  difficulty: string;
+  duration: string;
 }
 
 interface Video {
-  topic: string;
-  video_url: string;
-  status: string;
+  id: string;
+  title: string;
+  url: string;
+  duration: string;
 }
 
 const AITutor: React.FC<AITutorProps> = ({ subject, grade }) => {
   const [conversationState, setConversationState] = useState<ConversationState | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeStep, setActiveStep] = useState(0);
-  const [teachingPlan, setTeachingPlan] = useState<TeachingPlan | null>(null);
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [iframeKey, setIframeKey] = useState(0);
-  const [selectedSubject, setSelectedSubject] = useState('');
-  const [selectedGrade, setSelectedGrade] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  const [iframeKey, setIframeKey] = useState(0);
 
+  // Connection status listener
   useEffect(() => {
-    startConversation();
+    const checkConnection = async () => {
+      try {
+        const response = await fetch('http://localhost:8002/');
+        if (response.ok) {
+          setConnectionStatus('connected');
+        } else {
+          setConnectionStatus('disconnected');
+        }
+      } catch (error) {
+        console.error('Connection check failed:', error);
+        setConnectionStatus('disconnected');
+      }
+    };
+
+    checkConnection();
+    const interval = setInterval(checkConnection, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     if (conversationState?.joinUrl) {
-      // Request permissions before loading iframe
       navigator.mediaDevices.getUserMedia({ audio: true, video: true })
         .then(() => {
-          // Permissions granted, load iframe
           setIframeKey(Date.now());
         })
         .catch((error) => {
@@ -62,9 +69,10 @@ const AITutor: React.FC<AITutorProps> = ({ subject, grade }) => {
 
   const startConversation = async () => {
     try {
-      setLoading(true);
+      setIsLoading(true);
       setError(null);
-      
+      setConnectionStatus('connecting');
+
       const response = await fetch('http://localhost:8002/api/chat/start', {
         method: 'POST',
         headers: {
@@ -72,31 +80,37 @@ const AITutor: React.FC<AITutorProps> = ({ subject, grade }) => {
         },
         body: JSON.stringify({
           subject,
-          grade
-        })
+          grade,
+        }),
+        credentials: 'include',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to start conversation');
+        const errorData = await response.json();
+        if (errorData.message) {
+          throw new Error(errorData.message);
+        } else {
+          throw new Error('Unable to start the learning session. Please try again later.');
+        }
       }
 
       const data = await response.json();
-      console.log('Backend response:', data);
-      
-      if (!data.join_url) {
-        throw new Error('No join URL received from backend');
-      }
+      console.log('Backend response:', data); // Debug log
 
+      // Update conversation state with the correct response format
       setConversationState({
         id: data.conversation_id,
         joinUrl: data.join_url,
-        status: 'active'
+        status: data.status
       });
-    } catch (err) {
-      console.error('Error starting conversation:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start conversation');
+      
+      setConnectionStatus('connected');
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+      setError(error instanceof Error ? error.message : 'Unable to start the learning session. Please try again later.');
+      setConnectionStatus('disconnected');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -104,198 +118,237 @@ const AITutor: React.FC<AITutorProps> = ({ subject, grade }) => {
     if (!conversationState?.id) return;
 
     try {
-      setLoading(true);
-      setError(null);
-      
       const response = await fetch(`http://localhost:8002/api/chat/end/${conversationState.id}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        credentials: 'include',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to end conversation');
+        throw new Error('Unable to end the learning session. Please try again later.');
       }
 
-      const data = await response.json();
-      setConversationState(prev => prev ? { ...prev, status: 'completed' } : null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to end conversation');
-    } finally {
-      setLoading(false);
+      setConversationState(null);
+    } catch (error) {
+      console.error('Error ending conversation:', error);
+      setError('Unable to end the learning session. Please try again later.');
     }
   };
 
-  const steps = ['Initial Assessment', 'Learning Videos'];
-
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    );
-  }
-
   return (
-    <Paper elevation={3} sx={{ p: 4, maxWidth: 800, mx: 'auto', mt: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        AI Tutor Session - {subject} Grade {grade}
-      </Typography>
-
-      <Stepper activeStep={activeStep} sx={{ mb: 4 }}>
-        {steps.map((label) => (
-          <Step key={label}>
-            <StepLabel>{label}</StepLabel>
-          </Step>
-        ))}
-      </Stepper>
-
-      <Box sx={{ mt: 3 }}>
-        {activeStep === 0 && conversationState ? (
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              Initial Assessment
-            </Typography>
-            <Typography paragraph>
-              Please join the conversation with our AI tutor to assess your current understanding of {subject}.
-            </Typography>
-            
-            <Box
-              sx={{
-                position: 'relative',
-                paddingTop: '56.25%', // 16:9 aspect ratio
-                width: '100%',
-                mb: 3,
-              }}
-            >
-              {conversationState?.joinUrl ? (
-                <iframe
-                  key={iframeKey}
-                  src={conversationState.joinUrl}
-                  className="w-full h-full border-0"
-                  allow="microphone; camera; display-capture"
-                  style={{ minHeight: '600px', border: 'none' }}
-                />
-              ) : (
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold mb-4">Welcome to AI Tutor</h2>
-                    <p className="mb-4">Select a subject and grade to start your assessment</p>
-                    <div className="flex gap-4 justify-center">
-                      <select
-                        value={selectedSubject}
-                        onChange={(e) => setSelectedSubject(e.target.value)}
-                        className="p-2 border rounded"
-                      >
-                        <option value="">Select Subject</option>
-                        <option value="physics">Physics</option>
-                        <option value="chemistry">Chemistry</option>
-                        <option value="biology">Biology</option>
-                        <option value="mathematics">Mathematics</option>
-                      </select>
-                      <select
-                        value={selectedGrade}
-                        onChange={(e) => setSelectedGrade(e.target.value)}
-                        className="p-2 border rounded"
-                      >
-                        <option value="">Select Grade</option>
-                        {[7, 8, 9, 10, 11, 12].map((grade) => (
-                          <option key={grade} value={grade}>
-                            Grade {grade}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <button
-                      onClick={startConversation}
-                      disabled={!selectedSubject || !selectedGrade || isLoading}
-                      className={`mt-4 px-4 py-2 rounded ${
-                        !selectedSubject || !selectedGrade || isLoading
-                          ? 'bg-gray-300 cursor-not-allowed'
-                          : 'bg-blue-500 hover:bg-blue-600 text-white'
-                      }`}
-                    >
-                      {isLoading ? 'Starting...' : 'Start Assessment'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </Box>
-
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={endConversation}
-              disabled={conversationState.status === 'completed'}
-              fullWidth
-            >
-              End Assessment
-            </Button>
-          </Box>
-        ) : activeStep === 1 && teachingPlan ? (
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              Your Personalized Learning Plan
-            </Typography>
-            <Typography variant="subtitle1" gutterBottom>
-              Understanding Level: {teachingPlan.understanding_level}
-            </Typography>
-
-            <Typography variant="subtitle1" gutterBottom>
-              Topics to Learn:
-            </Typography>
-            <List>
-              {teachingPlan.topics.map((topic, index) => (
-                <ListItem key={index}>
-                  <ListItemText
-                    primary={topic.name}
-                    secondary={
-                      <>
-                        <Typography component="span" variant="body2">
-                          Priority: {topic.priority}/5
-                        </Typography>
-                        <br />
-                        <Typography component="span" variant="body2">
-                          Objectives: {topic.objectives.join(', ')}
-                        </Typography>
-                      </>
-                    }
+    <Box
+      sx={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'auto'
+      }}
+    >
+      <Container 
+        maxWidth={false}
+        sx={{
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          p: 4
+        }}
+      >
+        <Grid 
+          container 
+          justifyContent="center" 
+          alignItems="center"
+        >
+          <Grid item xs={12} md={10} lg={8} xl={6}>
+            {conversationState?.joinUrl ? (
+              <Paper elevation={3} sx={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                overflow: 'hidden',
+                height: '90vh'
+              }}>
+                <Box sx={{ 
+                  p: 2, 
+                  borderBottom: 1, 
+                  borderColor: 'divider', 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  background: 'linear-gradient(90deg, #2196f3 0%, #1976d2 100%)',
+                  color: 'white'
+                }}>
+                  <Typography variant="h6">
+                    AI Tutor Session - {subject} Grade {grade}
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    color="error"
+                    onClick={endConversation}
+                    startIcon={<CheckCircleIcon />}
+                  >
+                    End Learning Session
+                  </Button>
+                </Box>
+                <Box sx={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                  <iframe
+                    key={iframeKey}
+                    src={conversationState.joinUrl}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      height: '100%',
+                      border: 'none',
+                    }}
+                    allow="microphone; camera; display-capture"
                   />
-                </ListItem>
-              ))}
-            </List>
-
-            <Typography variant="subtitle1" gutterBottom sx={{ mt: 3 }}>
-              Learning Videos:
-            </Typography>
-            <List>
-              {videos.map((video, index) => (
-                <ListItem key={index}>
-                  <ListItemText
-                    primary={video.topic}
-                    secondary={
-                      <Button
-                        variant="outlined"
-                        href={video.video_url}
-                        target="_blank"
-                        disabled={video.status !== 'completed'}
-                      >
-                        {video.status === 'completed' ? 'Watch Video' : 'Processing...'}
-                      </Button>
+                </Box>
+              </Paper>
+            ) : (
+              <Paper 
+                elevation={3} 
+                sx={{ 
+                  p: 6,
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  minHeight: '500px',
+                  width: '100%',
+                  background: 'white',
+                  borderRadius: '16px',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  '&::before': {
+                    content: '""',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: '8px',
+                    background: 'linear-gradient(90deg, #2196f3 0%, #1976d2 100%)',
+                  }
+                }}
+              >
+                <Typography 
+                  variant="h3" 
+                  gutterBottom 
+                  align="center"
+                  sx={{
+                    fontWeight: 700,
+                    background: 'linear-gradient(45deg, #2196f3 30%, #21cbf3 90%)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    mb: 4
+                  }}
+                >
+                  Welcome to Your AI Learning Partner
+                </Typography>
+                <Typography 
+                  variant="h5" 
+                  color="primary" 
+                  gutterBottom 
+                  align="center"
+                  sx={{ fontWeight: 600 }}
+                >
+                  Subject: {subject}
+                </Typography>
+                <Typography 
+                  variant="h5" 
+                  color="primary" 
+                  gutterBottom 
+                  align="center"
+                  sx={{ fontWeight: 600 }}
+                >
+                  Grade: {grade}
+                </Typography>
+                <Typography 
+                  variant="body1" 
+                  color="text.secondary" 
+                  sx={{ 
+                    mb: 6, 
+                    textAlign: 'center', 
+                    maxWidth: '600px',
+                    fontSize: '1.1rem',
+                    lineHeight: 1.6
+                  }}
+                >
+                  Ready to start your personalized learning journey? Your AI tutor will help you understand {subject} better.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="large"
+                  onClick={startConversation}
+                  disabled={isLoading || connectionStatus !== 'connected'}
+                  sx={{ 
+                    mt: 2, 
+                    minWidth: '200px',
+                    py: 1.5,
+                    px: 4,
+                    borderRadius: '30px',
+                    fontSize: '1.1rem',
+                    fontWeight: 600,
+                    background: 'linear-gradient(45deg, #2196f3 30%, #21cbf3 90%)',
+                    boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
+                    '&:hover': {
+                      background: 'linear-gradient(45deg, #1976d2 30%, #2196f3 90%)',
                     }
-                  />
-                </ListItem>
-              ))}
-            </List>
-          </Box>
-        ) : (
-          <Typography>
-            Starting assessment...
-          </Typography>
-        )}
+                  }}
+                >
+                  {isLoading ? (
+                    <>
+                      <CircularProgress size={24} sx={{ mr: 1 }} />
+                      Starting Learning Session...
+                    </>
+                  ) : (
+                    'Start Learning'
+                  )}
+                </Button>
+              </Paper>
+            )}
+          </Grid>
+        </Grid>
+      </Container>
+
+      {/* Debug Status Indicator */}
+      <Box
+        sx={{
+          position: 'fixed',
+          bottom: 16,
+          right: 16,
+          zIndex: 1000,
+          backgroundColor: error ? 'error.main' :
+                          connectionStatus === 'connected' ? 'success.main' : 
+                          connectionStatus === 'connecting' ? 'warning.main' : 'error.main',
+          color: 'white',
+          padding: '8px 16px',
+          borderRadius: '20px',
+          boxShadow: '0 3px 5px 2px rgba(0, 0, 0, .1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          maxWidth: '300px',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          fontSize: '0.75rem'
+        }}
+      >
+        {connectionStatus === 'connecting' && <CircularProgress size={16} sx={{ color: 'white' }} />}
+        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+          {error ? error :
+           connectionStatus === 'connected' ? 'Connected' :
+           connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+        </Typography>
       </Box>
-    </Paper>
+    </Box>
   );
 };
 
